@@ -1,0 +1,56 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*secret*.json
+*credentials*.json
+
+# AWS credentials
+.aws/
+aws_credentials*
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Local configuration containing credentials
+config/secrets.*
+config/credentials.*
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Editor settings
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Local datasets and exports
+*.csv
+*.parquet
+*.xlsx
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
