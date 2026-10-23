@@ -1,0 +1,50 @@
+{
+	"jobConfig": {
+		"name": "GlobalPartners_Daily_Customer_CLV",
+		"description": "",
+		"role": "arn:aws:iam::593271843946:role/AWSGlueServiceRole-GlobalPartners",
+		"command": "glueetl",
+		"version": "6.0",
+		"currentGlueVersion": "",
+		"runtime": null,
+		"workerType": "G.1X",
+		"numberOfWorkers": 2,
+		"maxCapacity": 2,
+		"jobRunQueuingEnabled": false,
+		"maxRetries": 0,
+		"timeout": 480,
+		"maxConcurrentRuns": 1,
+		"security": "none",
+		"scriptName": "GlobalPartners_Daily_Customer_CLV.py",
+		"scriptLocation": "s3://aws-glue-assets-593271843946-us-east-1/scripts/",
+		"language": "python-3",
+		"spark": false,
+		"sparkConfiguration": "standard",
+		"jobParameters": [
+			{
+				"key": "--conf",
+				"value": "spark.eventLog.rolling.enabled=true --conf spark.sql.catalog.glue_catalog.glue.skip-name-validation=true",
+				"existing": false
+			}
+		],
+		"tags": [],
+		"jobMode": "DEVELOPER_MODE",
+		"createdOn": "2026-10-22T14:02:48.926Z",
+		"developerMode": true,
+		"connectionsList": [],
+		"temporaryDirectory": "s3://aws-glue-assets-593271843946-us-east-1/temporary/",
+		"logging": true,
+		"glueHiveMetastore": true,
+		"etlAutoTuning": true,
+		"metrics": true,
+		"observabilityMetrics": true,
+		"bookmark": "job-bookmark-disable",
+		"sparkPath": "s3://aws-glue-assets-593271843946-us-east-1/sparkHistoryLogs/",
+		"flexExecution": false,
+		"minFlexWorkers": null,
+		"maintenanceWindow": null
+	},
+	"hasBeenSaved": false,
+	"usageProfileName": null,
+	"script": "import sys\nfrom awsglue.utils import getResolvedOptions\nfrom pyspark.context import SparkContext\nfrom awsglue.context import GlueContext\nfrom awsglue.job import Job\nfrom pyspark.sql import functions as F\nfrom pyspark.sql.window import Window\nfrom pyspark.sql.types import DecimalType\n\n# 1. Initialize AWS Glue\nargs = getResolvedOptions(sys.argv, [\"JOB_NAME\"])\n\nsc = SparkContext.getOrCreate()\nglueContext = GlueContext(sc)\nspark = glueContext.spark_session\n\njob = Job(glueContext)\njob.init(args[\"JOB_NAME\"], args)\n\n# 2. Read existing Silver tables\nitems = spark.table(\n    \"globalpartners_silver_db.order_items\"\n)\n\noptions = spark.table(\n    \"globalpartners_silver_db.order_item_options\"\n)\n\ndates = spark.table(\n    \"globalpartners_silver_db.date_dim\"\n)\n\n# 3. Calculate revenue using PDF unit-price rules\n# Missing customer IDs cannot be assigned customer CLV.\n# USD-only scope avoids mixing different currencies.\nitems_clean = (\n    items\n    .filter(F.col(\"user_id\").isNotNull())\n    .filter(F.col(\"currency\") == \"USD\")\n    .withColumn(\n        \"order_date\",\n        F.to_date(\"creation_time_utc\")\n    )\n    .withColumn(\n        \"item_revenue\",\n        F.col(\"item_price\").cast(\"decimal(20,2)\")\n        * F.col(\"item_quantity\")\n    )\n)\n\n# 4. Aggregate option charges BEFORE joining\noptions_agg = (\n    options\n    .groupBy(\"order_id\", \"lineitem_id\")\n    .agg(\n        F.sum(\n            F.col(\"option_price\").cast(\"decimal(20,2)\")\n            * F.col(\"option_quantity\")\n        ).alias(\"option_revenue\")\n    )\n)\n\n# 5. Join item and option revenue\nline_revenue = (\n    items_clean.alias(\"i\")\n    .join(\n        options_agg.alias(\"o\"),\n        [\"order_id\", \"lineitem_id\"],\n        \"left\"\n    )\n    .withColumn(\n        \"option_revenue\",\n        F.coalesce(\n            F.col(\"option_revenue\"),\n            F.lit(0).cast(\"decimal(20,2)\")\n        )\n    )\n    .withColumn(\n        \"total_revenue\",\n        F.col(\"item_revenue\")\n        + F.col(\"option_revenue\")\n    )\n)\n\n# 6. Aggregate to one row per customer/order\norder_revenue = (\n    line_revenue\n    .groupBy(\"user_id\", \"order_id\", \"order_date\")\n    .agg(\n        F.sum(\"total_revenue\").alias(\"order_revenue\")\n    )\n)\n\n# 7. Aggregate daily customer activity\ndaily_revenue = (\n    order_revenue\n    .groupBy(\"user_id\", \"order_date\")\n    .agg(\n        F.sum(\"order_revenue\").alias(\"daily_revenue\"),\n        F.countDistinct(\"order_id\").alias(\"daily_orders\")\n    )\n)\n\n# 8. Join existing Silver date dimension\ncalendar = dates.select(\n    F.col(\"date_key\").alias(\"calendar_date\"),\n    \"year\",\n    \"month\",\n    \"week\",\n    \"day_of_week\",\n    \"is_weekend\",\n    \"is_holiday\"\n).dropDuplicates([\"calendar_date\"])\n\ndaily_revenue = (\n    daily_revenue\n    .join(\n        calendar,\n        daily_revenue.order_date == calendar.calendar_date,\n        \"left\"\n    )\n    .drop(\"calendar_date\")\n)\n\n# 9. Calculate cumulative observed customer CLV\ncustomer_window = (\n    Window\n    .partitionBy(\"user_id\")\n    .orderBy(\"order_date\")\n    .rowsBetween(\n        Window.unboundedPreceding,\n        Window.currentRow\n    )\n)\n\ndaily_clv = (\n    daily_revenue\n    .withColumn(\n        \"cumulative_clv\",\n        F.sum(\"daily_revenue\").over(customer_window)\n    )\n    .withColumn(\n        \"cumulative_orders\",\n        F.sum(\"daily_orders\").over(customer_window)\n    )\n)\n\n# 10. Calculate overall observed customer CLV\ncustomer_totals = (\n    daily_clv\n    .groupBy(\"user_id\")\n    .agg(\n        F.sum(\"daily_revenue\").alias(\"customer_total_clv\")\n    )\n)\n\n# 11. Assign CLV segments: top 20%, middle 60%, bottom 20%\nrank_window = Window.orderBy(\n    F.col(\"customer_total_clv\").desc(),\n    F.col(\"user_id\")\n)\n\ncustomer_segments = (\n    customer_totals\n    .withColumn(\n        \"clv_percentile\",\n        F.ntile(100).over(rank_window)\n    )\n    .withColumn(\n        \"clv_segment\",\n        F.when(\n            F.col(\"clv_percentile\") <= 20,\n            \"High CLV\"\n        )\n        .when(\n            F.col(\"clv_percentile\") <= 80,\n            \"Medium CLV\"\n        )\n        .otherwise(\"Low CLV\")\n    )\n)\n\n# 12. Combine daily metrics and customer segments\nfinal_df = (\n    daily_clv\n    .join(\n        customer_segments.select(\n            \"user_id\",\n            \"customer_total_clv\",\n            \"clv_segment\"\n        ),\n        \"user_id\",\n        \"left\"\n    )\n)\n# Ensure Gold output uses consistent data types\nfinal_df = (\n    final_df\n    .withColumn(\"daily_revenue\", F.col(\"daily_revenue\").cast(\"double\"))\n    .withColumn(\"cumulative_clv\", F.col(\"cumulative_clv\").cast(\"double\"))\n    .withColumn(\"customer_total_clv\", F.col(\"customer_total_clv\").cast(\"double\"))\n    .withColumn(\"daily_orders\", F.col(\"daily_orders\").cast(\"bigint\"))\n    .withColumn(\"cumulative_orders\", F.col(\"cumulative_orders\").cast(\"bigint\"))\n)\n# 13. Write Gold Parquet output\noutput_path = (\n    \"s3://globalpartners-medallion-593271843946/\"\n    \"gold/daily_customer_clv/\"\n)\n\n(\n    final_df\n    .write\n    .mode(\"overwrite\")\n    .format(\"parquet\")\n    .partitionBy(\"year\")\n    .save(output_path)\n)\n\nprint(\"Daily Customer CLV transformation completed.\")\n\njob.commit()\n"
+}
