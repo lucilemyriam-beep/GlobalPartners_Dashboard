@@ -54,3 +54,4 @@ Thumbs.db
 *.db
 *.sqlite
 *.sqlite3
+app_backup.py
