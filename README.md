@@ -204,3 +204,17 @@ The project uses a three-layer Medallion Architecture
 
 [View or download the editable diagrams.net diagram](GlobalPartners_Medallion_Architecture.drawio)
 
+# GlobalPartners Project Video Presentation
+
+This recorded presentation explains:
+
+- The business problem and project objectives
+- AWS Medallion Architecture (Bronze, Silver, Gold)
+- AWS Glue ETL pipelines and PySpark transformations
+- Amazon Athena and SQL analytics
+- Streamlit dashboard and business insights
+- GitHub Actions CI and project deliverables
+
+### Watch the Project Presentation
+
+[Watch the GlobalPartners Project Video](https://drive.google.com/file/d/1XXh3cQZjD3iB5D_9Nex3lQbzjFIJhXfk/view?usp=sharing)
