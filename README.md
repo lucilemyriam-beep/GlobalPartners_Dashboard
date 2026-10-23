@@ -193,3 +193,14 @@ Project Status
 
 
 AWS Glue ETL jobs and Amazon Athena Gold-layer analytical views have been created. Local SQL scripts have been organized for version control. Dashboard validation, deployment, and documentation are ongoing.
+## GlobalPartners Medallion Architecture
+
+The project uses a three-layer Medallion Architecture
+(Bronze, Silver, and Gold) built with AWS services.
+
+![GlobalPartners Medallion Architecture](GlobalPartners_Medallion_Architecture.png)
+
+### Architecture Diagram
+
+[View or download the editable diagrams.net diagram](GlobalPartners_Medallion_Architecture.drawio)
+
